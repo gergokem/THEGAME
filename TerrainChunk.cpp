@@ -184,6 +184,7 @@ ATerrainChunk::ATerrainChunk()
 {
 	PrimaryActorTick.bCanEverTick = false;
 	ProceduralMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
+	ProceduralMesh->bUseAsyncCooking = true;
 	RootComponent = ProceduralMesh;
 }
 
@@ -215,7 +216,8 @@ void ATerrainChunk::MarchCubeThreadSafe(
 	UWorldConfigDataAsset* BaseWorldConfig,
 	const TArray<FDynamicNoise>& ExtraNoises,
 	FVector ChunkWorldPos,
-	TMap<FName, float>& ReusableNoiseMap)
+	TMap<FName, float>& ReusableNoiseMap,
+	const TMap<FName, int32>& TextureIndexCache)
 {
 	float CubeValues[8];
 	int32 CubeIndex = 0;
@@ -337,28 +339,10 @@ void ATerrainChunk::MarchCubeThreadSafe(
 		// УМНЫЙ ПОИСК ИНДЕКСОВ (АВТОМАТИЗАЦИЯ ПО ТЕКСТУРАМ)
 		// ---------------------------------------------------------
 		auto GetTextureIndex = [&](const FBiomeLayer* Layer) -> int32 {
-			// 1. Проверяем на валидность и IsNone() вместо оператора "!"
-			if (!Layer || Layer->TextureName.IsNone() || !BaseWorldConfig) return 0;
-
-			FString LeftSide, RightSide;
-			FString AssetName = Layer->TextureName.ToString();
-
-			// 2. Если строка имеет вид "0: T_Grass_D", отсекаем индекс и берем чистое имя
-			if (AssetName.Split(TEXT(": "), &LeftSide, &RightSide))
-			{
-				// Ищем в реестре текстуру, чье имя совпадает с правой частью строки
-				int32 Idx = BaseWorldConfig->GlobalTextureRegistry.IndexOfByPredicate([&](const UTexture2D* Tex) {
-					return Tex && Tex->GetName() == RightSide;
-					});
-				return Idx == INDEX_NONE ? 0 : Idx;
-			}
-
-			// 3. Резервный поиск (если ввели просто имя "T_Grass_D" без выпадающего списка)
-			int32 Idx = BaseWorldConfig->GlobalTextureRegistry.IndexOfByPredicate([&](const UTexture2D* Tex) {
-				return Tex && Tex->GetFName() == Layer->TextureName;
-				});
-			return Idx == INDEX_NONE ? 0 : Idx;
-			};
+			if (!Layer || Layer->TextureName.IsNone()) return 0;
+			const int32* FoundIdx = TextureIndexCache.Find(Layer->TextureName);
+			return FoundIdx ? *FoundIdx : 0;
+		};
 
 		int32 TexA = GetTextureIndex(Layer0);
 		int32 TexB = TexA;
@@ -478,8 +462,34 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 	TMap<FName, float> PreAllocNoiseMap;
 	PreAllocNoiseMap.Reserve(LocalExtraNoises.Num());
 
-	// Захватываем массивы через MoveTemp (мгновенный перенос владения указателями без копирования данных)
-	Async(EAsyncExecution::ThreadPool, [this, ChunkWorldPos, LocalVoxelSize, ActiveBaseHeight, ActiveMountain, ActiveSpaghetti, ActiveCheese, ActiveEntrance, LocalExtraNoises, TargetMaterial, GlobalSeed, ZeroDownLevel, ZeroUpLevel, BaseWorldConfig, Size,
+	// Предварительно кэшируем индексы текстур на GameThread
+	TMap<FName, int32> TextureIndexCache;
+	auto CacheTextureIndex = [&](const FName& TextureName) {
+		if (TextureName.IsNone() || TextureIndexCache.Contains(TextureName)) return;
+		FString LeftSide, RightSide;
+		FString AssetName = TextureName.ToString();
+		int32 FoundIdx = 0;
+		if (AssetName.Split(TEXT(": "), &LeftSide, &RightSide)) {
+			int32 Idx = BaseWorldConfig->GlobalTextureRegistry.IndexOfByPredicate([&](const UTexture2D* Tex) {
+				return Tex && Tex->GetName() == RightSide;
+			});
+			FoundIdx = (Idx == INDEX_NONE) ? 0 : Idx;
+		} else {
+			int32 Idx = BaseWorldConfig->GlobalTextureRegistry.IndexOfByPredicate([&](const UTexture2D* Tex) {
+				return Tex && Tex->GetFName() == TextureName;
+			});
+			FoundIdx = (Idx == INDEX_NONE) ? 0 : Idx;
+		}
+		TextureIndexCache.Add(TextureName, FoundIdx);
+	};
+	for (UBiomeDataAsset* Biome : BaseWorldConfig->DA_Biomes) {
+		if (!Biome) continue;
+		for (const FBiomeLayer& Layer : Biome->LayersUnderAir) CacheTextureIndex(Layer.TextureName);
+		for (const FBiomeLayer& Layer : Biome->LayersOverAir) CacheTextureIndex(Layer.TextureName);
+	}
+
+	// Захватываем массивы через MoveTemp
+	Async(EAsyncExecution::ThreadPool, [this, ChunkWorldPos, LocalVoxelSize, ActiveBaseHeight, ActiveMountain, ActiveSpaghetti, ActiveCheese, ActiveEntrance, LocalExtraNoises, TargetMaterial, GlobalSeed, ZeroDownLevel, ZeroUpLevel, BaseWorldConfig, Size, TextureIndexCache,
 		MovedDensities = MoveTemp(PreAllocDensities),
 		MovedHeights = MoveTemp(PreAllocTerrainHeights),
 		MovedSectionData = MoveTemp(PreAllocSectionData),
@@ -606,9 +616,19 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 					for (int32 X = 0; X < GridSize; X++)
 					{
 						MarchCubeThreadSafe(X, Y, Z, ZeroDownLevel, ZeroUpLevel, LocalVoxelSize, LocalDensities, LocalTerrainHeights,
-							LocalSectionData, BaseWorldConfig, LocalExtraNoises, ChunkWorldPos, ThreadLocalNoiseMap);
+							LocalSectionData, BaseWorldConfig, LocalExtraNoises, ChunkWorldPos, ThreadLocalNoiseMap, TextureIndexCache);
 					}
 				}
+			}
+
+			if (LocalSectionData.Vertices.Num() > 0) {
+				UKismetProceduralMeshLibrary::CalculateTangentsForMesh(
+					LocalSectionData.Vertices,
+					LocalSectionData.Triangles,
+					LocalSectionData.UVs,
+					LocalSectionData.Normals,
+					LocalSectionData.Tangents
+				);
 			}
 
 			AsyncTask(ENamedThreads::GameThread, [this, TargetMaterial, MovedDensities = MoveTemp(LocalDensities), MovedSectionData = MoveTemp(LocalSectionData)]() mutable
@@ -619,14 +639,6 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 
 					if (MovedSectionData.Vertices.Num() > 0)
 					{
-						UKismetProceduralMeshLibrary::CalculateTangentsForMesh(
-							MovedSectionData.Vertices,
-							MovedSectionData.Triangles,
-							MovedSectionData.UVs,
-							MovedSectionData.Normals,
-							MovedSectionData.Tangents
-						);
-
 						ProceduralMesh->CreateMeshSection_LinearColor(
 							0,
 							MovedSectionData.Vertices,
