@@ -13,8 +13,8 @@ struct FDynamicNoise
 {
 	FName NoiseName;
 	FastNoiseLite NoiseGen;
-	// Удали FVector2D MinMax; отсюда!
-	FNoiseSettings Settings; // Теперь мы храним тут ВСЕ настройки шума
+	// РЈРґР°Р»Рё FVector2D MinMax; РѕС‚СЃСЋРґР°!
+	FNoiseSettings Settings; // РўРµРїРµСЂСЊ РјС‹ С…СЂР°РЅРёРј С‚СѓС‚ Р’РЎР• РЅР°СЃС‚СЂРѕР№РєРё С€СѓРјР°
 };
 
 struct FChunkMeshData
@@ -23,7 +23,7 @@ struct FChunkMeshData
 	TArray<int32> Triangles;
 	TArray<FVector> Normals;
 	TArray<FVector2D> UVs;
-	TArray<FVector2D> UV1s; // << СЮДА ЗАПИШЕМ TEX_A и TEX_B
+	TArray<FVector2D> UV1s; // << РЎР®Р”Рђ Р—РђРџРРЁР•Рњ TEX_A Рё TEX_B
 	TArray<FLinearColor> Colors;
 	TArray<FProcMeshTangent> Tangents;
 };
@@ -59,7 +59,7 @@ private:
 
 	TArray<float> VoxelDensities;
 
-	// Полностью статические утилиты для потокобезопасного расчета (не используют и не требуют 'this')
+	// РџРѕР»РЅРѕСЃС‚СЊСЋ СЃС‚Р°С‚РёС‡РµСЃРєРёРµ СѓС‚РёР»РёС‚С‹ РґР»СЏ РїРѕС‚РѕРєРѕР±РµР·РѕРїР°СЃРЅРѕРіРѕ СЂР°СЃС‡РµС‚Р° (РЅРµ РёСЃРїРѕР»СЊР·СѓСЋС‚ Рё РЅРµ С‚СЂРµР±СѓСЋС‚ 'this')
 	static int32 GetIndex(int32 X, int32 Y, int32 Z);
 	static FVector InterpolateVerts(FVector V1, FVector V2, float D1, float D2);
 
@@ -67,11 +67,12 @@ private:
 	int32 X, int32 Y, int32 Z,
 	float ZeroDownLevel, float ZeroUpLevel, float LocalVoxelSize,
 	const TArray<float>& Densities, const TArray<float>& TerrainHeights,
-	FChunkMeshData& OutSectionData, // << ТЕПЕРЬ ТУТ ПРОСТО ССЫЛКА НА ОДНУ ДАТУ
+	FChunkMeshData& OutSectionData, // << РўР•РџР•Р Р¬ РўРЈРў РџР РћРЎРўРћ РЎРЎР«Р›РљРђ РќРђ РћР”РќРЈ Р”РђРўРЈ
 	UWorldConfigDataAsset* BaseWorldConfig,
 	const TArray<FDynamicNoise>& ExtraNoises,
 	FVector ChunkWorldPos,
-	TMap<FName, float>& ReusableNoiseMap);
+	TMap<FName, float>& ReusableNoiseMap,
+	const TMap<FName, int32>& TextureIndexCache);
 
 	static UBiomeDataAsset* GetDominantBiome(float GlobalX, float GlobalY, float GlobalZ, float SurfaceZ, float ZeroDownLevel, float ZeroUpLevel, UWorldConfigDataAsset* WorldConfig, const TArray<FDynamicNoise>& ExtraNoises, TMap<FName, float>& ReusableNoiseMap);
 	static const FBiomeLayer* GetBiomeLayer(UBiomeDataAsset* Biome, float Depth, FVector Normal, float GlobalX, float GlobalY, float GlobalZ, float LocalVoxelSize);
