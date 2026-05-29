@@ -251,7 +251,7 @@ void ATerrainChunk::MarchCubeThreadSafe(
 	float CellCenterZ = ChunkWorldPos.Z + (Z + 0.5f) * LocalVoxelSize;
 	float TargetZ = TerrainHeights[X + Y * Size];
 
-	UBiomeDataAsset* CellBiome = GetDominantBiome(CellCenterX, CellCenterY, CellCenterZ, TargetZ, ZeroDownLevel, BaseWorldConfig->ZeroUpLevel, BaseWorldConfig, ExtraNoises, ReusableNoiseMap);
+	//UBiomeDataAsset* CellBiome = GetDominantBiome(CellCenterX, CellCenterY, CellCenterZ, TargetZ, ZeroDownLevel, BaseWorldConfig->ZeroUpLevel, BaseWorldConfig, ExtraNoises, ReusableNoiseMap);
 
 	uint8 CellClass = regularCellClass[CubeIndex];
 	const FRegularCellData& CellData = regularCellData[CellClass];
@@ -323,38 +323,60 @@ void ATerrainChunk::MarchCubeThreadSafe(
 		FVector P1 = GetVertexFromEdgeCode(edgeCode1);
 		FVector P2 = GetVertexFromEdgeCode(edgeCode2);
 
-		float GlobalZ0 = ChunkWorldPos.Z + P0.Z;
-		float GlobalZ1 = ChunkWorldPos.Z + P1.Z;
-		float GlobalZ2 = ChunkWorldPos.Z + P2.Z;
+		// 1. Вычисляем точные мировые координаты для каждой вершины
+		float GlobalX0 = ChunkWorldPos.X + P0.X; float GlobalY0 = ChunkWorldPos.Y + P0.Y; float GlobalZ0 = ChunkWorldPos.Z + P0.Z;
+		float GlobalX1 = ChunkWorldPos.X + P1.X; float GlobalY1 = ChunkWorldPos.Y + P1.Y; float GlobalZ1 = ChunkWorldPos.Z + P1.Z;
+		float GlobalX2 = ChunkWorldPos.X + P2.X; float GlobalY2 = ChunkWorldPos.Y + P2.Y; float GlobalZ2 = ChunkWorldPos.Z + P2.Z;
 
 		float Depth0 = FMath::Max(0.0f, TargetZ - GlobalZ0);
 		float Depth1 = FMath::Max(0.0f, TargetZ - GlobalZ1);
 		float Depth2 = FMath::Max(0.0f, TargetZ - GlobalZ2);
 
-		const FBiomeLayer* Layer0 = GetBiomeLayer(CellBiome, Depth0, TrueNormal, ChunkWorldPos.X + P0.X, ChunkWorldPos.Y + P0.Y, GlobalZ0, LocalVoxelSize);
-		const FBiomeLayer* Layer1 = GetBiomeLayer(CellBiome, Depth1, TrueNormal, ChunkWorldPos.X + P1.X, ChunkWorldPos.Y + P1.Y, GlobalZ1, LocalVoxelSize);
-		const FBiomeLayer* Layer2 = GetBiomeLayer(CellBiome, Depth2, TrueNormal, ChunkWorldPos.X + P2.X, ChunkWorldPos.Y + P2.Y, GlobalZ2, LocalVoxelSize);
+		// 2. ОЦЕНИВАЕМ БИОМ ДЛЯ КАЖДОЙ ВЕРШИНЫ ОТДЕЛЬНО (Это создаст градиент!)
+		UBiomeDataAsset* Biome0 = GetDominantBiome(GlobalX0, GlobalY0, GlobalZ0, TargetZ, ZeroDownLevel, BaseWorldConfig->ZeroUpLevel, BaseWorldConfig, ExtraNoises, ReusableNoiseMap);
+		UBiomeDataAsset* Biome1 = GetDominantBiome(GlobalX1, GlobalY1, GlobalZ1, TargetZ, ZeroDownLevel, BaseWorldConfig->ZeroUpLevel, BaseWorldConfig, ExtraNoises, ReusableNoiseMap);
+		UBiomeDataAsset* Biome2 = GetDominantBiome(GlobalX2, GlobalY2, GlobalZ2, TargetZ, ZeroDownLevel, BaseWorldConfig->ZeroUpLevel, BaseWorldConfig, ExtraNoises, ReusableNoiseMap);
 
-		// ---------------------------------------------------------
-		// УМНЫЙ ПОИСК ИНДЕКСОВ (АВТОМАТИЗАЦИЯ ПО ТЕКСТУРАМ)
-		// ---------------------------------------------------------
+		FVector N0 = GetSmoothNormal(edgeCode0);
+		FVector N1 = GetSmoothNormal(edgeCode1);
+		FVector N2 = GetSmoothNormal(edgeCode2);
+
+		// 3. Получаем слои на основе точных биомов вершин
+		const FBiomeLayer* Layer0 = GetBiomeLayer(Biome0, Depth0, N0, GlobalX0, GlobalY0, GlobalZ0, LocalVoxelSize);
+		const FBiomeLayer* Layer1 = GetBiomeLayer(Biome1, Depth1, N1, GlobalX1, GlobalY1, GlobalZ1, LocalVoxelSize);
+		const FBiomeLayer* Layer2 = GetBiomeLayer(Biome2, Depth2, N2, GlobalX2, GlobalY2, GlobalZ2, LocalVoxelSize);
+
+		// УМНЫЙ ПОИСК ИНДЕКСОВ
 		auto GetTextureIndex = [&](const FBiomeLayer* Layer) -> int32 {
 			if (!Layer || Layer->TextureName.IsNone()) return 0;
 			const int32* FoundIdx = TextureIndexCache.Find(Layer->TextureName);
 			return FoundIdx ? *FoundIdx : 0;
-		};
+			};
 
-		int32 TexA = GetTextureIndex(Layer0);
-		int32 TexB = TexA;
-		if (Layer1 && GetTextureIndex(Layer1) != TexA) TexB = GetTextureIndex(Layer1);
-		else if (Layer2 && GetTextureIndex(Layer2) != TexA) TexB = GetTextureIndex(Layer2);
+		int32 Tex0 = GetTextureIndex(Layer0);
+		int32 Tex1 = GetTextureIndex(Layer1);
+		int32 Tex2 = GetTextureIndex(Layer2);
 
-		auto GetVertexAlpha = [&](const FBiomeLayer* L) -> float {
-			if (!L) return 0.0f;
-			int32 LTex = GetTextureIndex(L);
-			if (LTex == TexA) return 0.0f;
-			if (LTex == TexB) return 1.0f;
-			return 0.5f;
+		int32 TexA = Tex0;
+		int32 TexB = Tex0;
+		if (Tex1 != TexA) TexB = Tex1;
+		else if (Tex2 != TexA) TexB = Tex2;
+
+		// 4. СОРТИРОВКА ИНДЕКСОВ ТЕКСТУР (КРИТИЧЕСКИ ВАЖНО!)
+		// Это гарантирует, что соседние кубы не перевернут UV-координаты, 
+		// что сломало бы интерполяцию в шейдере.
+		if (TexA > TexB) {
+			int32 Temp = TexA;
+			TexA = TexB;
+			TexB = Temp;
+		}
+
+		// 5. Вычисляем альфу на основе отсортированных текстур
+		auto GetVertexAlpha = [&](int32 VTex) -> float {
+			if (TexA == TexB) return 0.0f; // В треугольнике только одна текстура
+			if (VTex == TexA) return 0.0f;
+			if (VTex == TexB) return 1.0f;
+			return 0.5f; // Фолбэк
 			};
 
 		int32 VertIndexStart = OutSectionData.Vertices.Num();
@@ -375,23 +397,19 @@ void ATerrainChunk::MarchCubeThreadSafe(
 		OutSectionData.UVs.Add(CalculateUV(P1 + ChunkWorldPos, TrueNormal) / UVScale);
 		OutSectionData.UVs.Add(CalculateUV(P2 + ChunkWorldPos, TrueNormal) / UVScale);
 
-		// ПИШЕМ ЧИСТЫЕ ИНДЕКСЫ В UV1 
+		// ПИШЕМ ОТСОРТИРОВАННЫЕ ИНДЕКСЫ В UV1 
 		OutSectionData.UV1s.Add(FVector2D(TexA, TexB));
 		OutSectionData.UV1s.Add(FVector2D(TexA, TexB));
 		OutSectionData.UV1s.Add(FVector2D(TexA, TexB));
 
-		// ПИШЕМ АЛЬФУ СМЕШИВАНИЯ В КРАСНЫЙ КАНАЛ VERTEX COLOR
-		OutSectionData.Colors.Add(FLinearColor(GetVertexAlpha(Layer0), 0.0f, 0.0f, 1.0f));
-		OutSectionData.Colors.Add(FLinearColor(GetVertexAlpha(Layer1), 0.0f, 0.0f, 1.0f));
-		OutSectionData.Colors.Add(FLinearColor(GetVertexAlpha(Layer2), 0.0f, 0.0f, 1.0f));
+		// ПИШЕМ МЯГКУЮ АЛЬФУ В VERTEX COLOR
+		OutSectionData.Colors.Add(FLinearColor(GetVertexAlpha(Tex0), 0.0f, 0.0f, 1.0f));
+		OutSectionData.Colors.Add(FLinearColor(GetVertexAlpha(Tex1), 0.0f, 0.0f, 1.0f));
+		OutSectionData.Colors.Add(FLinearColor(GetVertexAlpha(Tex2), 0.0f, 0.0f, 1.0f));
 
 		OutSectionData.Triangles.Add(VertIndexStart);
 		OutSectionData.Triangles.Add(VertIndexStart + 1);
 		OutSectionData.Triangles.Add(VertIndexStart + 2);
-
-		FVector N0 = GetSmoothNormal(edgeCode0);
-		FVector N1 = GetSmoothNormal(edgeCode1);
-		FVector N2 = GetSmoothNormal(edgeCode2);
 
 		OutSectionData.Normals.Add(N0);
 		OutSectionData.Normals.Add(N1);
