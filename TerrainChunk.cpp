@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #include "TerrainChunk.h"
 #include "MarchingCubesTables.h"
@@ -639,6 +639,9 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 
 					if (MovedSectionData.Vertices.Num() > 0)
 					{
+						// СОЗДАЕМ ПУСТОЙ МАССИВ ЗДЕСЬ
+						TArray<FVector2D> EmptyUVs;
+
 						ProceduralMesh->CreateMeshSection_LinearColor(
 							0,
 							MovedSectionData.Vertices,
@@ -646,8 +649,8 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 							MovedSectionData.Normals,
 							MovedSectionData.UVs,
 							MovedSectionData.UV1s,
-							TArray<FVector2D>(),
-							TArray<FVector2D>(),
+							EmptyUVs, // <-- ПЕРЕДАЕМ ПЕРЕМЕННУЮ ВМЕСТО TArray<FVector2D>()
+							EmptyUVs, // <-- ПЕРЕДАЕМ ПЕРЕМЕННУЮ ВМЕСТО TArray<FVector2D>()
 							MovedSectionData.Colors,
 							MovedSectionData.Tangents,
 							true);
