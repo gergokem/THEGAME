@@ -157,7 +157,7 @@ const FBiomeLayer* ATerrainChunk::GetBiomeLayer(UBiomeDataAsset* Biome, float De
 {
 	if (!Biome) return nullptr;
 
-	const TArray<FBiomeLayer>& TargetLayers = (Normal.Z > -0.2f) ? Biome->LayersUnderAir : Biome->LayersOverAir;
+	const TArray<FBiomeLayer>& TargetLayers = (Normal.Z > -0.2f) ? Biome->LayersOverAir : Biome->LayersUnderAir;
 	if (TargetLayers.Num() == 0) return nullptr;
 
 	float NoiseOffset = (FMath::Sin(GlobalX * 0.05f) + FMath::Cos(GlobalY * 0.05f) + FMath::Sin(GlobalX * 0.15f + GlobalY * 0.15f)) * 50.0f;
