@@ -551,7 +551,7 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 					float MountVal = (RoughNoise.GetNoise(GlobalX, GlobalY) + 1.0f) * 0.5f;
 
 					float TargetZ = FMath::Lerp(ActiveBaseHeight.MinMax.X, ActiveBaseHeight.MinMax.Y, BaseVal);
-					TargetZ += MountVal * ActiveMountain.MinMax.Y * FMath::Pow(BaseVal, 2.0f);
+					TargetZ += MountVal * ActiveMountain.MinMax.Y * (BaseVal * BaseVal);
 
 					LocalTerrainHeights[X + Y * ChunkSize] = TargetZ;
 				}
