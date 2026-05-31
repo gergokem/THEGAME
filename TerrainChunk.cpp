@@ -192,8 +192,8 @@ void ATerrainChunk::BeginPlay() { Super::BeginPlay(); }
 
 int32 ATerrainChunk::GetIndex(int32 X, int32 Y, int32 Z)
 {
-	int32 Size = GridSize + 2;
-	return X + (Y * Size) + (Z * Size * Size);
+
+	return X + (Y * ChunkSize) + (Z * ChunkSizeSq);
 }
 
 FVector ATerrainChunk::InterpolateVerts(FVector V1, FVector V2, float D1, float D2)
@@ -222,7 +222,7 @@ void ATerrainChunk::MarchCubeThreadSafe(
 	float CubeValues[8];
 	int32 CubeIndex = 0;
 	float IsoLevel = 0.0f;
-	int32 Size = GridSize + 2;
+
 
 	for (int32 i = 0; i < 8; i++)
 	{
@@ -249,7 +249,7 @@ void ATerrainChunk::MarchCubeThreadSafe(
 	float CellCenterX = ChunkWorldPos.X + (X + 0.5f) * LocalVoxelSize;
 	float CellCenterY = ChunkWorldPos.Y + (Y + 0.5f) * LocalVoxelSize;
 	float CellCenterZ = ChunkWorldPos.Z + (Z + 0.5f) * LocalVoxelSize;
-	float TargetZ = TerrainHeights[X + Y * Size];
+	float TargetZ = TerrainHeights[X + Y * ChunkSize];
 
 	//UBiomeDataAsset* CellBiome = GetDominantBiome(CellCenterX, CellCenterY, CellCenterZ, TargetZ, ZeroDownLevel, BaseWorldConfig->ZeroUpLevel, BaseWorldConfig, ExtraNoises, ReusableNoiseMap);
 
@@ -276,10 +276,10 @@ void ATerrainChunk::MarchCubeThreadSafe(
 		};
 
 	auto SafeGetDensity = [&](int32 lx, int32 ly, int32 lz) -> float {
-		lx = FMath::Clamp(lx, 0, Size - 1);
-		ly = FMath::Clamp(ly, 0, Size - 1);
-		lz = FMath::Clamp(lz, 0, Size - 1);
-		return Densities[lx + (ly * Size) + (lz * Size * Size)];
+		lx = FMath::Clamp(lx, 0, ChunkSize - 1);
+		ly = FMath::Clamp(ly, 0, ChunkSize - 1);
+		lz = FMath::Clamp(lz, 0, ChunkSize - 1);
+		return Densities[lx + (ly * ChunkSize) + (lz * ChunkSizeSq)];
 		};
 
 	auto GetGridNormal = [&](int32 lx, int32 ly, int32 lz) -> FVector {
@@ -437,7 +437,7 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 
 	FVector ChunkWorldPos = GetActorLocation();
 	float LocalVoxelSize = VoxelSize;
-	int32 Size = GridSize + 2; // Вычисляем размер заранее
+	// Вычисляем размер заранее
 
 	UMaterialInterface* TargetMaterial = BaseWorldConfig->WorldMasterMaterial;
 
@@ -462,10 +462,10 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 	// Это снимает локи с менеджера памяти (FMalloc) в рабочих потоках
 	// ====================================================================
 	TArray<float> PreAllocDensities;
-	PreAllocDensities.SetNumUninitialized(Size * Size * Size);
+	PreAllocDensities.SetNumUninitialized(ChunkSizeSq * ChunkSize);
 
 	TArray<float> PreAllocTerrainHeights;
-	PreAllocTerrainHeights.SetNumUninitialized(Size * Size);
+	PreAllocTerrainHeights.SetNumUninitialized(ChunkSizeSq);
 
 	FChunkMeshData PreAllocSectionData;
 	// Резервируем память с запасом, чтобы избежать Resize() внутри Async-потока
@@ -507,7 +507,7 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 	}
 
 	// Захватываем массивы через MoveTemp
-	Async(EAsyncExecution::ThreadPool, [this, ChunkWorldPos, LocalVoxelSize, ActiveBaseHeight, ActiveMountain, ActiveSpaghetti, ActiveCheese, ActiveEntrance, LocalExtraNoises, TargetMaterial, GlobalSeed, ZeroDownLevel, ZeroUpLevel, BaseWorldConfig, Size, TextureIndexCache,
+	Async(EAsyncExecution::ThreadPool, [this, ChunkWorldPos, LocalVoxelSize, ActiveBaseHeight, ActiveMountain, ActiveSpaghetti, ActiveCheese, ActiveEntrance, LocalExtraNoises, TargetMaterial, GlobalSeed, ZeroDownLevel, ZeroUpLevel, BaseWorldConfig, TextureIndexCache,
 		MovedDensities = MoveTemp(PreAllocDensities),
 		MovedHeights = MoveTemp(PreAllocTerrainHeights),
 		MovedSectionData = MoveTemp(PreAllocSectionData),
@@ -540,9 +540,9 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 				return FMath::Lerp(b, a, h) + k * h * (1.0f - h);
 				};
 
-			for (int32 Y = 0; Y < Size; Y++)
+			for (int32 Y = 0; Y < ChunkSize; Y++)
 			{
-				for (int32 X = 0; X < Size; X++)
+				for (int32 X = 0; X < ChunkSize; X++)
 				{
 					float GlobalX = static_cast<float>((GlobalOriginX + X) * LocalVoxelSize);
 					float GlobalY = static_cast<float>((GlobalOriginY + Y) * LocalVoxelSize);
@@ -553,21 +553,21 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 					float TargetZ = FMath::Lerp(ActiveBaseHeight.MinMax.X, ActiveBaseHeight.MinMax.Y, BaseVal);
 					TargetZ += MountVal * ActiveMountain.MinMax.Y * FMath::Pow(BaseVal, 2.0f);
 
-					LocalTerrainHeights[X + Y * Size] = TargetZ;
+					LocalTerrainHeights[X + Y * ChunkSize] = TargetZ;
 				}
 			}
 
-			for (int32 Z = 0; Z < Size; Z++)
+			for (int32 Z = 0; Z < ChunkSize; Z++)
 			{
-				for (int32 Y = 0; Y < Size; Y++)
+				for (int32 Y = 0; Y < ChunkSize; Y++)
 				{
-					for (int32 X = 0; X < Size; X++)
+					for (int32 X = 0; X < ChunkSize; X++)
 					{
 						float GlobalX = static_cast<float>((GlobalOriginX + X) * LocalVoxelSize);
 						float GlobalY = static_cast<float>((GlobalOriginY + Y) * LocalVoxelSize);
 						float GlobalZ = static_cast<float>((GlobalOriginZ + Z) * LocalVoxelSize);
 
-						float TargetZ = LocalTerrainHeights[X + Y * Size];
+						float TargetZ = LocalTerrainHeights[X + Y * ChunkSize];
 						float TerrainSDF = TargetZ - GlobalZ;
 						float FinalDensity = TerrainSDF;
 
@@ -621,7 +621,7 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 							FinalDensity = (FinalDensity < 0.0f) ? -0.001f : 0.001f;
 						}
 
-						int32 Idx = X + (Y * Size) + (Z * Size * Size);
+						int32 Idx = X + (Y * ChunkSize) + (Z * ChunkSizeSq);
 						LocalDensities[Idx] = FinalDensity;
 					}
 				}

@@ -55,6 +55,8 @@ public:
 
 private:
 	static const int32 GridSize = 32;
+	static constexpr int32 ChunkSize = GridSize + 2;
+	static constexpr int32 ChunkSizeSq = ChunkSize * ChunkSize;
 	std::atomic<bool> bIsGenerating{ false };
 
 	TArray<float> VoxelDensities;
