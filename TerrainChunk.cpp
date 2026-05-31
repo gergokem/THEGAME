@@ -507,7 +507,8 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 	}
 
 	// Захватываем массивы через MoveTemp
-	Async(EAsyncExecution::ThreadPool, [this, ChunkWorldPos, LocalVoxelSize, ActiveBaseHeight, ActiveMountain, ActiveSpaghetti, ActiveCheese, ActiveEntrance, LocalExtraNoises, TargetMaterial, GlobalSeed, ZeroDownLevel, ZeroUpLevel, BaseWorldConfig, Size, TextureIndexCache,
+	TWeakObjectPtr<ATerrainChunk> WeakThis(this);
+	Async(EAsyncExecution::ThreadPool, [WeakThis, ChunkWorldPos, LocalVoxelSize, ActiveBaseHeight, ActiveMountain, ActiveSpaghetti, ActiveCheese, ActiveEntrance, LocalExtraNoises, TargetMaterial, GlobalSeed, ZeroDownLevel, ZeroUpLevel, BaseWorldConfig, Size, TextureIndexCache,
 		MovedDensities = MoveTemp(PreAllocDensities),
 		MovedHeights = MoveTemp(PreAllocTerrainHeights),
 		MovedSectionData = MoveTemp(PreAllocSectionData),
@@ -649,18 +650,19 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 				);
 			}
 
-			AsyncTask(ENamedThreads::GameThread, [this, TargetMaterial, MovedDensities = MoveTemp(LocalDensities), MovedSectionData = MoveTemp(LocalSectionData)]() mutable
+			AsyncTask(ENamedThreads::GameThread, [WeakThis, TargetMaterial, MovedDensities = MoveTemp(LocalDensities), MovedSectionData = MoveTemp(LocalSectionData)]() mutable
 				{
-					if (!IsValid(this)) return;
-					this->VoxelDensities = MoveTemp(MovedDensities);
-					ProceduralMesh->ClearAllMeshSections();
+					ATerrainChunk* StrongThis = WeakThis.Get();
+					if (!IsValid(StrongThis)) return;
+					StrongThis->VoxelDensities = MoveTemp(MovedDensities);
+					StrongThis->ProceduralMesh->ClearAllMeshSections();
 
 					if (MovedSectionData.Vertices.Num() > 0)
 					{
 						// СОЗДАЕМ ПУСТОЙ МАССИВ ЗДЕСЬ
 						TArray<FVector2D> EmptyUVs;
 
-						ProceduralMesh->CreateMeshSection_LinearColor(
+						StrongThis->ProceduralMesh->CreateMeshSection_LinearColor(
 							0,
 							MovedSectionData.Vertices,
 							MovedSectionData.Triangles,
@@ -675,10 +677,10 @@ void ATerrainChunk::GenerateChunkAsync(int32 GlobalSeed, float ZeroDownLevel, fl
 
 						if (TargetMaterial)
 						{
-							ProceduralMesh->SetMaterial(0, TargetMaterial);
+							StrongThis->ProceduralMesh->SetMaterial(0, TargetMaterial);
 						}
 					}
-					bIsGenerating.store(false);
+					StrongThis->bIsGenerating.store(false);
 				});
 		});
 }
